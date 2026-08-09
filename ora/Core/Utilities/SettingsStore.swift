@@ -242,7 +242,14 @@ class SettingsStore: ObservableObject {
     }
 
     @Published var passwordManagerProvider: PasswordManagerProviderKind {
-        didSet { defaults.set(passwordManagerProvider.rawValue, forKey: passwordManagerProviderKey) }
+        didSet {
+            defaults.set(passwordManagerProvider.rawValue, forKey: passwordManagerProviderKey)
+            // The Password Provider decides which user scripts new page
+            // configurations carry, so loaded webviews must be rebuilt.
+            if oldValue != passwordManagerProvider {
+                NotificationCenter.default.post(name: .passwordProviderChanged, object: nil)
+            }
+        }
     }
 
     @Published var passwordAutofillEnabled: Bool {

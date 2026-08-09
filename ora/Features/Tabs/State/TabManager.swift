@@ -120,6 +120,7 @@ class TabManager: ObservableObject {
         }
 
         try? modelContext.save()
+        ExtensionManager.shared.tabPropertiesDidChange(tab, properties: .pinned)
     }
 
     func toggleFavTab(_ tab: Tab) {
@@ -132,6 +133,7 @@ class TabManager: ObservableObject {
         }
 
         try? modelContext.save()
+        ExtensionManager.shared.tabPropertiesDidChange(tab, properties: .pinned)
     }
 
     // MARK: - Container Public API's
@@ -224,10 +226,12 @@ class TabManager: ObservableObject {
             .sorted(by: { $0.lastAccessedAt ?? Date() > $1.lastAccessedAt ?? Date() }).first,
             lastAccessedTab.isWebViewReady
         {
+            let previousActiveTab = activeTab
             activeTab?.maybeIsActive = false
             activeTab = lastAccessedTab
             activeTab?.maybeIsActive = true
             lastAccessedTab.lastAccessedAt = Date()
+            ExtensionManager.shared.tabDidActivate(lastAccessedTab, previous: previousActiveTab)
         } else {
             activeTab = nil
         }
@@ -264,6 +268,7 @@ class TabManager: ObservableObject {
             tabManager: self,
             isPrivate: isPrivate
         )
+        let previousActiveTab = activeTab
         modelContext.insert(newTab)
         container.tabs.append(newTab)
         activeTab?.maybeIsActive  = false
@@ -271,6 +276,8 @@ class TabManager: ObservableObject {
         activeTab?.maybeIsActive  = true
         newTab.lastAccessedAt = Date()
         container.lastAccessedAt = Date()
+        ExtensionManager.shared.tabDidOpen(newTab)
+        ExtensionManager.shared.tabDidActivate(newTab, previous: previousActiveTab)
 
         // Initialize the WebView for the new active tab
         newTab.restoreTransientState(
@@ -320,6 +327,7 @@ class TabManager: ObservableObject {
                 )
                 modelContext.insert(newTab)
                 container.tabs.append(newTab)
+                ExtensionManager.shared.tabDidOpen(newTab)
 
                 if focusAfterOpening {
                     activateTab(newTab)
@@ -388,6 +396,11 @@ class TabManager: ObservableObject {
         if shouldTrackForRestore, tab.type == .normal {
             trackRecentlyClosedTab(tab)
         }
+        // Pinned/fav tabs survive "close" (only their webview dies), so they
+        // stay open from the extensions' point of view.
+        if tab.type == .normal {
+            ExtensionManager.shared.tabDidClose(tab)
+        }
         tab.stopMedia { [weak self] in
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -438,6 +451,7 @@ class TabManager: ObservableObject {
 
         modelContext.insert(restoredTab)
         container.tabs.append(restoredTab)
+        ExtensionManager.shared.tabDidOpen(restoredTab)
         activateTab(restoredTab)
         try? modelContext.save()
     }
@@ -452,6 +466,8 @@ class TabManager: ObservableObject {
     func activateTab(_ tab: Tab) {
         // Toggle Picture-in-Picture on tab switch
         togglePiP(tab, activeTab)
+
+        let previousActiveTab = activeTab
 
         // Activate the tab
         activeTab?.maybeIsActive = false
@@ -477,6 +493,7 @@ class TabManager: ObservableObject {
             )
         }
         tab.updateHeaderColor()
+        ExtensionManager.shared.tabDidActivate(tab, previous: previousActiveTab)
         try? modelContext.save()
     }
 
@@ -620,6 +637,21 @@ class TabManager: ObservableObject {
         self.reorderTabs(from: tab, toTab: newTab)
     }
 
+    /// All tabs across every Space of this window in sidebar order
+    /// (favorites, pinned, normal per Space). Used by the WebExtension window
+    /// adapter to report tab membership and ordering.
+    func allOpenTabs() -> [Tab] {
+        fetchContainers().flatMap { container in
+            orderedTabs(in: container, ofType: .fav)
+                + orderedTabs(in: container, ofType: .pinned)
+                + orderedTabs(in: container, ofType: .normal)
+        }
+    }
+
+    private func orderedTabs(in container: TabContainer, ofType type: TabType) -> [Tab] {
+        container.tabs.filter { $0.type == type }.sorted { $0.order > $1.order }
+    }
+
     func refreshPrivacySettings(for containerId: UUID) {
         guard let container = fetchContainer(id: containerId) else { return }
 
@@ -627,7 +659,18 @@ class TabManager: ObservableObject {
         guard !loadedTabs.isEmpty else { return }
 
         for tab in loadedTabs {
-            tab.refreshBrowserPageForPrivacySettings()
+            tab.rebuildBrowserPage()
+        }
+    }
+
+    /// The Password Provider is global, so switching it rebuilds every loaded
+    /// webview in every Space so new page configurations pick up the
+    /// provider's user-script set.
+    func refreshTabsForPasswordProviderChange() {
+        for container in fetchContainers() {
+            for tab in container.tabs where tab.isWebViewReady {
+                tab.rebuildBrowserPage()
+            }
         }
     }
 
@@ -668,6 +711,7 @@ private extension TabManager {
 
     func deleteContainerContents(_ container: TabContainer, containerId: UUID) {
         for tab in Array(container.tabs) {
+            ExtensionManager.shared.tabDidClose(tab)
             if tab.isWebViewReady {
                 tab.destroyWebView()
             }

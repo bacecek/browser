@@ -204,7 +204,9 @@ class Tab: ObservableObject, Identifiable {
         isPrivate: Bool
     ) {
         // Avoid double initialization
-        if browserPage != nil { return }
+        if browserPage != nil {
+            return
+        }
 
         if passwordCoordinator == nil {
             passwordCoordinator = PasswordAutofillCoordinator(tab: self)
@@ -213,7 +215,9 @@ class Tab: ObservableObject, Identifiable {
         let engine = BrowserEngine.shared
         let profile = engine.makeProfile(identifier: container.id, isPrivate: isPrivate)
         let privacySettings = SettingsStore.shared.privacySettings(for: container.id)
-        let userScripts = OraBrowserScripts.userScripts() + BrowserPrivacyService.privacyScripts(for: privacySettings)
+        let userScripts = OraBrowserScripts.userScripts(
+            passwordProvider: SettingsStore.shared.passwordManagerProvider
+        ) + BrowserPrivacyService.privacyScripts(for: privacySettings)
         let page = engine.makePage(
             profile: profile,
             configuration: BrowserPageConfiguration.oraDefault(
@@ -232,7 +236,11 @@ class Tab: ObservableObject, Identifiable {
         self.syncBackgroundColorFromHex()
         // Load after a short delay to ensure layout
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
-            let url = if self.type != .normal { self.savedURL } else { self.url }
+            let url = if self.type != .normal {
+                self.savedURL
+            } else {
+                self.url
+            }
             page.load(URLRequest(url: url ?? self.url))
             self.isWebViewReady = true
         }
@@ -352,7 +360,9 @@ class Tab: ObservableObject, Identifiable {
         browserPage?.reload()
     }
 
-    func refreshBrowserPageForPrivacySettings() {
+    /// Tears down and recreates the webview so the page picks up a new
+    /// configuration (privacy settings or password-provider changes).
+    func rebuildBrowserPage() {
         guard isWebViewReady,
               let historyManager,
               let downloadManager,

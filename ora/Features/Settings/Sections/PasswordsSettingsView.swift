@@ -64,7 +64,11 @@ struct PasswordsSettingsView: View {
         }
         .alert("Delete saved password?", isPresented: Binding(
             get: { pendingDelete != nil },
-            set: { if !$0 { pendingDelete = nil } }
+            set: {
+                if !$0 {
+                    pendingDelete = nil
+                }
+            }
         )) {
             Button("Delete", role: .destructive) {
                 if let pendingDelete {
@@ -147,7 +151,11 @@ struct PasswordsSettingsView: View {
                 }
 
                 if !selectedProvider.usesBuiltInVault {
-                    emptyState(message: "\(selectedProvider.title) integration coming soon.")
+                    emptyState(
+                        message: selectedProvider.isAvailable
+                            ? "Passwords are managed by \(selectedProvider.title) and are not stored in Ora."
+                            : "\(selectedProvider.title) integration coming soon."
+                    )
                 } else if containers.isEmpty {
                     emptyState(message: "Create a space to start storing passwords.")
                 } else if isUnlocked {

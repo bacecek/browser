@@ -1,5 +1,8 @@
 import AppKit
+import os.log
 import SwiftUI
+
+private let navLogger = Logger(subsystem: "com.orabrowser.ora", category: "Navigation")
 
 final class TabBrowserPageDelegate: BrowserPageDelegate {
     weak var tab: Tab?
@@ -65,6 +68,9 @@ final class TabBrowserPageDelegate: BrowserPageDelegate {
             if let url = event.url {
                 tab.url = url
             }
+            MainActor.assumeIsolated {
+                ExtensionManager.shared.tabPropertiesDidChange(tab, properties: [.loading, .URL])
+            }
 
         case .committed:
             tab.isLoading = event.isLoading
@@ -73,36 +79,51 @@ final class TabBrowserPageDelegate: BrowserPageDelegate {
                 tab.title = title
                 MainActor.assumeIsolated {
                     mediaController?.syncTitleForTab(tab.id, newTitle: title)
+                    ExtensionManager.shared.tabPropertiesDidChange(tab, properties: .title)
                 }
             }
 
         case .finished:
-            tab.isLoading = event.isLoading
-            tab.loadingProgress = event.progress
-            if let title = event.title, !title.isEmpty {
-                tab.title = title
-                MainActor.assumeIsolated {
-                    mediaController?.syncTitleForTab(tab.id, newTitle: title)
-                }
-            }
-            if let url = event.url {
-                tab.url = url
-                if tab.favicon == nil {
-                    tab.setFavicon()
-                }
-                tab.updateHistory()
-                tab.updateHeaderColor()
-            }
-
-            let workItem = DispatchWorkItem { [weak tab] in
-                tab?.loadingProgress = 0
-            }
-            progressResetWorkItem = workItem
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: workItem)
+            handleNavigationFinished(event, for: tab)
         }
     }
 
+    private func handleNavigationFinished(_ event: BrowserNavigationEvent, for tab: Tab) {
+        tab.isLoading = event.isLoading
+        tab.loadingProgress = event.progress
+        if let title = event.title, !title.isEmpty {
+            tab.title = title
+            MainActor.assumeIsolated {
+                mediaController?.syncTitleForTab(tab.id, newTitle: title)
+            }
+        }
+        if let url = event.url {
+            tab.url = url
+            if tab.favicon == nil {
+                tab.setFavicon()
+            }
+            tab.updateHistory()
+            tab.updateHeaderColor()
+        }
+
+        MainActor.assumeIsolated {
+            ExtensionManager.shared.tabPropertiesDidChange(tab, properties: [.loading, .URL, .title])
+        }
+
+        let workItem = DispatchWorkItem { [weak tab] in
+            tab?.loadingProgress = 0
+        }
+        progressResetWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: workItem)
+    }
+
     func browserPage(_ page: BrowserPage, didFailNavigationWith error: Error, failingURL: URL?) {
+        let nsError = error as NSError
+        navLogger.error("""
+        NAV FAILED url=\(failingURL?.absoluteString ?? "nil", privacy: .public) \
+        domain=\(nsError.domain, privacy: .public) code=\(nsError.code) \
+        desc=\(nsError.localizedDescription, privacy: .public)
+        """)
         tab?.setNavigationError(error, for: failingURL)
     }
 
@@ -244,6 +265,11 @@ final class TabBrowserPageDelegate: BrowserPageDelegate {
             MainActor.assumeIsolated {
                 mediaController?.syncTitleForTab(tab.id, newTitle: update.title)
             }
+        }
+
+        // SPA/pushState navigation
+        MainActor.assumeIsolated {
+            ExtensionManager.shared.tabPropertiesDidChange(tab, properties: [.URL, .title])
         }
     }
 

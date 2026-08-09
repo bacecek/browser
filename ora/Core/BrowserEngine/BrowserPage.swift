@@ -50,6 +50,15 @@ final class BrowserPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptM
         let contentController = WKUserContentController()
         webConfiguration.userContentController = contentController
         messageNames = configuration.scriptMessageNames
+
+        // Extensions run in every Space but never in Private Windows.
+        // Must attach before the WKWebView is created below.
+        if !profile.isPrivate {
+            webConfiguration.webExtensionController = MainActor.assumeIsolated {
+                ExtensionManager.shared.controller
+            }
+        }
+
         webView = WKWebView(frame: .zero, configuration: webConfiguration)
         self.delegate = delegate
 
@@ -81,13 +90,33 @@ final class BrowserPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptM
         BrowserPrivacyService.shared.prepareConfiguration(
             webConfiguration,
             spaceID: profile.identifier
-        ) { [weak self] in
-            self?.isReadyForNavigation = true
-            self?.flushPendingNavigationIfNeeded()
+        ) { [weak self, isPrivate = profile.isPrivate] in
+            self?.openNavigationGate(isPrivate: isPrivate)
+        }
+    }
+
+    /// Opens the deferred-navigation gate. Non-private pages first await the shared
+    /// Extensions load so content scripts exist before the first navigation.
+    private func openNavigationGate(isPrivate: Bool) {
+        if isPrivate {
+            isReadyForNavigation = true
+            flushPendingNavigationIfNeeded()
+            return
+        }
+        Task { @MainActor in
+            await ExtensionManager.shared.ensureLoaded()
+            self.isReadyForNavigation = true
+            self.flushPendingNavigationIfNeeded()
         }
     }
 
     var contentView: NSView {
+        webView
+    }
+
+    /// The underlying web view, exposed only for the WKWebExtension host
+    /// adapters (`webView(for:)` must hand WebKit the real page web view).
+    var extensionHostWebView: WKWebView {
         webView
     }
 

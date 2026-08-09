@@ -20,7 +20,7 @@ targets:
   ora:
     type: application
     platform: "macOS"
-    deploymentTarget: "15.0"
+    deploymentTarget: "26.0"
     sources:
       - path: ora
         excludes:
@@ -88,7 +88,7 @@ targets:
               - public.xhtml
         NSUserActivityTypes:
           - NSUserActivityTypeBrowsingWeb
-        LSMinimumSystemVersion: "15.0"
+        LSMinimumSystemVersion: "26.0"
         LSApplicationCategoryType: public.app-category.web-browser
 
     entitlements:
@@ -148,7 +148,7 @@ targets:
   oraTests:
     type: bundle.unit-test
     platform: "macOS"
-    deploymentTarget: "15.0"
+    deploymentTarget: "26.0"
     sources:
       - path: oraTests
     dependencies:

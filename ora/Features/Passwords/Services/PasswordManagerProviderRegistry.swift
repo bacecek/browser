@@ -47,15 +47,15 @@ final class PasswordManagerProviderRegistry {
             vaultStoredInOra: true,
             autofillMode: .builtInOverlay,
             isAvailable: true
+        ),
+        PasswordManagerProviderDescriptor(
+            kind: .onePassword,
+            title: "1Password (extension)",
+            summary: "Use the 1Password Extension for autofill. Passwords are not stored in Ora.",
+            vaultStoredInOra: false,
+            autofillMode: .nativeProviderOverlay,
+            isAvailable: true
         )
-        // PasswordManagerProviderDescriptor(
-        //     kind: .onePassword,
-        //     title: "1Password",
-        //     summary: "Reserved for a native 1Password integration with 1Password's own autofill surface.",
-        //     vaultStoredInOra: false,
-        //     autofillMode: .nativeProviderOverlay,
-        //     isAvailable: false
-        // ),
         // PasswordManagerProviderDescriptor(
         //     kind: .bitwarden,
         //     title: "Bitwarden",

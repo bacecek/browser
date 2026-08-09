@@ -229,6 +229,12 @@ struct URLBar: View {
                 }
                 .zIndex(1)
 
+                // Extension Actions — one button per installed Extension.
+                // Never shown in Private Windows.
+                if !privacyMode.isPrivate {
+                    ExtensionActionsView(foregroundColor: buttonForegroundColor)
+                }
+
                 URLBarMenuButton(
                     foregroundColor: buttonForegroundColor,
                     onShare: { sourceView, sourceRect in
@@ -262,11 +268,15 @@ struct URLBar: View {
                     .allowsHitTesting(false)
             )
             .onChange(of: tabManager.activeTab?.id) { _, _ in
-                if isEditing { dismissEditing() }
+                if isEditing {
+                    dismissEditing()
+                }
             }
             .onChange(of: appState.showLauncher) { _, newValue in
                 // Dismiss URL bar editing if the center launcher is opened
-                if newValue, isEditing { dismissEditing() }
+                if newValue, isEditing {
+                    dismissEditing()
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .copyAddressURL)) { _ in
                 if let activeTab = tabManager.activeTab {

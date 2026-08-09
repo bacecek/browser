@@ -1,7 +1,7 @@
 import Foundation
 
 enum OraBrowserScripts {
-    static func userScripts() -> [BrowserUserScript] {
+    static func userScripts(passwordProvider: PasswordManagerProviderKind) -> [BrowserUserScript] {
         var scripts = [
             BrowserUserScript(
                 name: "ora-bridge",
@@ -17,7 +17,13 @@ enum OraBrowserScripts {
             )
         ]
 
-        if let passwordManagerScript = loadResourceScript(named: "password-manager") {
+        // The built-in password manager script only belongs to providers that use
+        // Ora's own overlay or vault. Selecting an external Password Provider
+        // (e.g. the 1Password Extension) must not inject it.
+        let provider = PasswordManagerProviderRegistry.shared.descriptor(for: passwordProvider)
+        if provider.usesBuiltInOverlay || provider.usesBuiltInVault,
+           let passwordManagerScript = loadResourceScript(named: "password-manager")
+        {
             scripts.append(
                 BrowserUserScript(
                     name: "ora-password-manager",

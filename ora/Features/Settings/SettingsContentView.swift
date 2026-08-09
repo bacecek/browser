@@ -5,6 +5,7 @@ enum SettingsTab: String, Hashable, CaseIterable {
     case general
     case spaces
     case passwords
+    case extensions
     case shortcuts
     case searchEngines
 
@@ -13,6 +14,7 @@ enum SettingsTab: String, Hashable, CaseIterable {
         case .general: return "General"
         case .spaces: return "Spaces"
         case .passwords: return "Passwords"
+        case .extensions: return "Extensions"
         case .shortcuts: return "Shortcuts"
         case .searchEngines: return "Search"
         }
@@ -23,6 +25,7 @@ enum SettingsTab: String, Hashable, CaseIterable {
         case .general: return "gearshape"
         case .spaces: return "rectangle.3.group"
         case .passwords: return "key.horizontal"
+        case .extensions: return "puzzlepiece.extension"
         case .shortcuts: return "command"
         case .searchEngines: return "magnifyingglass"
         }
@@ -36,6 +39,8 @@ enum SettingsTab: String, Hashable, CaseIterable {
             return "Space-specific defaults and per-space data controls."
         case .passwords:
             return "Password manager integration, vault access, and autofill behavior."
+        case .extensions:
+            return "Install extensions from the Chrome Web Store and manage their permissions."
         case .shortcuts:
             return "Keyboard shortcuts and command mappings."
         case .searchEngines:
@@ -92,6 +97,8 @@ struct SettingsContentView: View {
             SpacesSettingsView()
         case .passwords:
             PasswordsSettingsView()
+        case .extensions:
+            ExtensionsSettingsView()
         case .shortcuts:
             ShortcutsSettingsView()
         case .searchEngines:

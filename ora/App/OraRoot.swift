@@ -107,7 +107,16 @@ struct OraRoot: View {
             .modelContext(downloadContext)
             .withTheme()
             .enableInjection()
+            .onChange(of: window) { _, newWindow in
+                // (Re-)register this window with the extension controller once
+                // the NSWindow exists. Private Windows are never registered.
+                registerWithExtensionPlatform(window: newWindow)
+            }
+            .onDisappear {
+                unregisterFromExtensionPlatform()
+            }
             .onAppear {
+                registerWithExtensionPlatform(window: window)
                 downloadManager.toastManager = toastManager
                 Task {
                     let containerIDs = await MainActor.run {
@@ -148,23 +157,9 @@ struct OraRoot: View {
                     return false
                 }
 
-                // Cmd+Q quit confirmation
-                NotificationCenter.default.addObserver(forName: .quitRequested, object: nil, queue: .main) { note in
-                    guard note.object as? NSWindow === window ?? NSApp.keyWindow else { return }
-                    guard window != nil else {
-                        NSApp.reply(toApplicationShouldTerminate: true)
-                        return
-                    }
-                    dialogManager.confirm(
-                        title: "Quit Ora?",
-                        message: "Are you sure you want to quit?",
-                        iconImage: Image("OraColorLogo"),
-                        confirmLabel: "Quit",
-                        variant: .destructive,
-                        onConfirm: { NSApp.reply(toApplicationShouldTerminate: true) },
-                        onCancel: { NSApp.reply(toApplicationShouldTerminate: false) }
-                    )
-                }
+                registerExtensionCommandKeyHandler()
+
+                registerQuitConfirmationObserver()
 
                 if SettingsStore.shared.autoUpdateEnabled {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
@@ -194,7 +189,9 @@ struct OraRoot: View {
                 NotificationCenter.default.addObserver(forName: .findInPage, object: nil, queue: .main) { note in
                     Task { @MainActor in
                         guard note.object as? NSWindow === window ?? NSApp.keyWindow else { return }
-                        if let activeTab = tabManager.activeTab { appState.showFinderIn = activeTab.id }
+                        if let activeTab = tabManager.activeTab {
+                            appState.showFinderIn = activeTab.id
+                        }
                     }
                 }
                 NotificationCenter.default.addObserver(forName: .toggleFullURL, object: nil, queue: .main) { note in
@@ -228,7 +225,9 @@ struct OraRoot: View {
                 NotificationCenter.default.addObserver(forName: .togglePinTab, object: nil, queue: .main) { note in
                     Task { @MainActor in
                         guard note.object as? NSWindow === window ?? NSApp.keyWindow else { return }
-                        if let tab = tabManager.activeTab { tabManager.togglePinTab(tab) }
+                        if let tab = tabManager.activeTab {
+                            tabManager.togglePinTab(tab)
+                        }
                     }
                 }
                 NotificationCenter.default.addObserver(forName: .nextTab, object: nil, queue: .main) { note in
@@ -286,6 +285,13 @@ struct OraRoot: View {
                         }
                     }
 
+                NotificationCenter.default
+                    .addObserver(forName: .passwordProviderChanged, object: nil, queue: .main) { _ in
+                        Task { @MainActor in
+                            tabManager.refreshTabsForPasswordProviderChange()
+                        }
+                    }
+
                 // Clear cache and reload
                 NotificationCenter.default
                     .addObserver(forName: .clearCacheAndReload, object: nil, queue: .main) { note in
@@ -331,5 +337,64 @@ struct OraRoot: View {
                         }
                     }
             }
+    }
+}
+
+// MARK: - Extension platform wiring
+
+private extension OraRoot {
+    /// Cmd+Q quit confirmation.
+    func registerQuitConfirmationObserver() {
+        NotificationCenter.default.addObserver(forName: .quitRequested, object: nil, queue: .main) { note in
+            guard note.object as? NSWindow === window ?? NSApp.keyWindow else { return }
+            guard window != nil else {
+                NSApp.reply(toApplicationShouldTerminate: true)
+                return
+            }
+            dialogManager.confirm(
+                title: "Quit Ora?",
+                message: "Are you sure you want to quit?",
+                iconImage: Image("OraColorLogo"),
+                confirmLabel: "Quit",
+                variant: .destructive,
+                onConfirm: { NSApp.reply(toApplicationShouldTerminate: true) },
+                onCancel: { NSApp.reply(toApplicationShouldTerminate: false) }
+            )
+        }
+    }
+
+    /// (Re-)registers this window with the extension controller and the
+    /// permission-prompt seam. Private Windows are never registered.
+    func registerWithExtensionPlatform(window: NSWindow?) {
+        ExtensionManager.shared.registerWindow(
+            tabManager: tabManager,
+            window: window,
+            isPrivate: privacyMode.isPrivate
+        )
+        if !privacyMode.isPrivate {
+            ExtensionDialogPermissionPrompting.shared.register(
+                dialogManager: dialogManager,
+                window: window
+            )
+        }
+    }
+
+    func unregisterFromExtensionPlatform() {
+        ExtensionManager.shared.unregisterWindow(tabManager: tabManager)
+        ExtensionDialogPermissionPrompting.shared.unregister(dialogManager: dialogManager)
+    }
+
+    /// Extension keyboard commands (e.g. 1Password's Cmd+\) — routed through
+    /// the key chain so they fire even with the toolbar hidden and while a
+    /// webview has focus. Never in Private Windows, and only when this window
+    /// is key.
+    func registerExtensionCommandKeyHandler() {
+        keyModifierListener.registerKeyDownHandler { event in
+            MainActor.assumeIsolated {
+                guard !privacyMode.isPrivate else { return false }
+                guard let window, window.isKeyWindow else { return false }
+                return ExtensionActionCoordinator.shared.handleKeyDown(event)
+            }
+        }
     }
 }

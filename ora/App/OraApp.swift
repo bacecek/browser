@@ -8,6 +8,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Disable automatic window tabbing for all NSWindow instances
         NSWindow.allowsAutomaticWindowTabbing = false
         AppearanceManager.shared.updateAppearance()
+        // Load installed Extensions into the global controller. Pages await
+        // the same shared load (ExtensionManager.ensureLoaded) before their
+        // first navigation, so session-restore tabs cannot outrun it.
+        Task { @MainActor in
+            await ExtensionManager.shared.ensureLoaded()
+        }
         #if DEBUG
             Bundle(path: "/Applications/InjectionIII.app/Contents/Resources/macOSInjection.bundle")?.load()
             Bundle(path: "/Applications/InjectionIII.app/Contents/Resources/macOSSwiftUISupport.bundle")?.load()
@@ -26,8 +32,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func getWindow() -> NSWindow? {
-        if let key = NSApp.keyWindow { return key }
-        if let visible = NSApp.windows.first(where: { $0.isVisible }) { return visible }
+        if let key = NSApp.keyWindow {
+            return key
+        }
+        if let visible = NSApp.windows.first(where: { $0.isVisible }) {
+            return visible
+        }
         if let any = NSApp.windows.first {
             any.makeKeyAndOrderFront(nil)
             return any
