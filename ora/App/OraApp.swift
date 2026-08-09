@@ -21,6 +21,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard SettingsStore.shared.confirmBeforeQuit else { return .terminateNow }
         let targetWindow = NSApp.keyWindow ?? NSApp.windows.first(where: { $0.isVisible })
         guard let targetWindow else { return .terminateNow }
         NotificationCenter.default.post(name: .quitRequested, object: targetWindow)

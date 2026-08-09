@@ -156,6 +156,7 @@ class SettingsStore: ObservableObject {
     private let tabRemovalTimeoutKey = "settings.tabRemovalTimeout"
     private let maxRecentTabsKey = "settings.maxRecentTabs"
     private let autoPiPEnabledKey = "settings.autoPiPEnabled"
+    private let confirmBeforeQuitKey = "settings.confirmBeforeQuit"
     private let passwordsEnabledKey = "settings.passwords.enabled"
     private let passwordManagerProviderKey = "settings.passwords.provider"
     private let passwordAutofillEnabledKey = "settings.passwords.autofillEnabled"
@@ -235,6 +236,10 @@ class SettingsStore: ObservableObject {
 
     @Published var autoPiPEnabled: Bool {
         didSet { defaults.set(autoPiPEnabled, forKey: autoPiPEnabledKey) }
+    }
+
+    @Published var confirmBeforeQuit: Bool {
+        didSet { defaults.set(confirmBeforeQuit, forKey: confirmBeforeQuitKey) }
     }
 
     @Published var passwordsEnabled: Bool {
@@ -329,6 +334,7 @@ class SettingsStore: ObservableObject {
         maxRecentTabs = maxRecentTabsValue == 0 ? 5 : maxRecentTabsValue
 
         autoPiPEnabled = defaults.object(forKey: autoPiPEnabledKey) as? Bool ?? true
+        confirmBeforeQuit = defaults.object(forKey: confirmBeforeQuitKey) as? Bool ?? true
         passwordsEnabled = defaults.object(forKey: passwordsEnabledKey) as? Bool ?? true
         if let raw = defaults.string(forKey: passwordManagerProviderKey),
            let provider = PasswordManagerProviderKind(rawValue: raw)

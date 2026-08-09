@@ -36,6 +36,10 @@ struct GeneralSettingsView: View {
 
             AppearanceSelector(selection: $appearanceManager.appearance)
 
+            SettingsCard(header: "Behavior") {
+                Toggle("Ask for confirmation before quitting", isOn: $settings.confirmBeforeQuit)
+            }
+
             SettingsCard(header: "Tab Management") {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
