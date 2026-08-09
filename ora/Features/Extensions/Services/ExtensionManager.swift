@@ -57,6 +57,17 @@ final class ExtensionManager: NSObject, ObservableObject {
     var orderedWindowAdapters: [ExtensionWindowAdapter] = []
     var windowFocusObservers: [ObjectIdentifier: NSObjectProtocol] = [:]
 
+    // MARK: Native messaging (see ExtensionManager+NativeMessaging)
+
+    /// Locates Native Messaging Host manifests (Ora → user Chrome → system
+    /// Chrome). Injectable for tests.
+    var nativeMessagingResolver = NativeMessagingHostResolver()
+
+    /// Live Native Ports keyed by their host process identity. Entries keep
+    /// the WebKit port alive (releasing it disconnects) and let extension
+    /// unload / app quit kill the right processes.
+    var nativeMessagingConnections: [ObjectIdentifier: NativeMessagingConnection] = [:]
+
     /// Bumped on every tab event; lets window adapters cache chrome.tabs.query results.
     private(set) var tabCacheGeneration: UInt = 0
 
@@ -78,7 +89,20 @@ final class ExtensionManager: NSObject, ObservableObject {
         controller = WKWebExtensionController(configuration: configuration)
         super.init()
         controller.delegate = self
+
+        // Native Messaging Host processes must not outlive Ora.
+        quitObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.terminateAllNativeMessagingHosts()
+            }
+        }
     }
+
+    private var quitObserver: NSObjectProtocol?
 
     // MARK: - Lookup
 
@@ -88,6 +112,18 @@ final class ExtensionManager: NSObject, ObservableObject {
 
     func extensionId(for context: WKWebExtensionContext) -> String? {
         contexts.first(where: { $0.value === context })?.key
+    }
+
+    /// The webview configuration a tab must use to host one of this
+    /// extension's own pages (options page, extension-page tabs). Top-level
+    /// `webkit-extension://` navigation in an ordinary tab webview is rejected
+    /// with -1008; WebKit only loads extension pages in webviews built from
+    /// the extension context's configuration. Returns nil for any URL that is
+    /// not a loaded extension's page.
+    func extensionPageWebViewConfiguration(for url: URL) -> WKWebViewConfiguration? {
+        guard url.scheme == "webkit-extension", let host = url.host?.lowercased() else { return nil }
+        guard let context = contexts.first(where: { $0.key.lowercased() == host })?.value else { return nil }
+        return context.webViewConfiguration
     }
 
     func bumpTabCacheGeneration() {
@@ -191,6 +227,11 @@ final class ExtensionManager: NSObject, ObservableObject {
         configureContextIdentity(context, extensionId: extensionId)
         applyPersistedGrants(to: context, webExtension: webExtension, record: record)
         context.isInspectable = true
+        // chrome.offscreen cannot be implemented on WKWebExtension (no API
+        // hook); marking it unsupported makes `chrome.offscreen` undefined so
+        // extensions (1Password's worker) feature-detect instead of crashing.
+        // Must be set before the context is loaded.
+        context.unsupportedAPIs = context.unsupportedAPIs.union(["offscreen", "browser.offscreen"])
 
         contexts[extensionId] = context
         do {

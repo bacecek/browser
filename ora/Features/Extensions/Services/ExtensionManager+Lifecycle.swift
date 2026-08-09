@@ -38,8 +38,17 @@ extension ExtensionManager {
     }
 
     func windowAdapter(containing tab: Tab) -> ExtensionWindowAdapter? {
-        guard let tabManager = tab.tabManager else { return nil }
-        return windowAdapter(for: tabManager)
+        if let tabManager = tab.tabManager, let adapter = windowAdapter(for: tabManager) {
+            return adapter
+        }
+        // Tabs restored from persistence carry no tabManager until their
+        // first activation, but the worker can already reference them through
+        // browser.tabs — resolve membership through the windows' own tab
+        // lists so every such tab still resolves to a window ("Tab for page N
+        // was not found" otherwise).
+        return orderedWindowAdapters.first { adapter in
+            adapter.orderedTabs().contains { $0.id == tab.id }
+        }
     }
 
     /// Whether this tab belongs to a registered (non-private) window.

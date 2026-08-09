@@ -1,4 +1,5 @@
 import Foundation
+@preconcurrency import WebKit
 
 struct BrowserPageConfiguration {
     let userAgent: String?
@@ -64,8 +65,16 @@ final class BrowserEngine {
     func makePage(
         profile: BrowserEngineProfile,
         configuration: BrowserPageConfiguration,
-        delegate: BrowserPageDelegate?
+        delegate: BrowserPageDelegate?,
+        extensionPageConfiguration: WKWebViewConfiguration? = nil,
+        extensionPageHost: String? = nil
     ) -> BrowserPage {
-        BrowserPage(profile: profile, configuration: configuration, delegate: delegate)
+        BrowserPage(
+            profile: profile,
+            configuration: configuration,
+            delegate: delegate,
+            extensionPageConfiguration: extensionPageConfiguration,
+            extensionPageHost: extensionPageHost
+        )
     }
 }

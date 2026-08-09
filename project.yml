@@ -151,6 +151,10 @@ targets:
     deploymentTarget: "26.0"
     sources:
       - path: oraTests
+        excludes:
+          - "Resources/**"
+      - path: oraTests/Resources
+        buildPhase: resources
     dependencies:
       - target: ora
     settings:

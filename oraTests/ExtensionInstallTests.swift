@@ -377,6 +377,42 @@ struct ExtensionInstallTests {
         #expect(!restored.context.hasPermission(.alarms))
     }
 
+    // MARK: Extension context surface (offscreen, extension pages)
+
+    @Test func loadedContextMarksOffscreenUnsupported() async throws {
+        let (manager, directory) = makeManager()
+        defer { cleanUp(manager, directory: directory) }
+        let source = try ExtensionFixture.makeUnpackedDirectory()
+        defer { try? FileManager.default.removeItem(at: source) }
+
+        let installed = try await manager.install(fromUnpackedDirectory: source, consent: approveAll)
+
+        // 1Password's worker must see chrome.offscreen === undefined and
+        // feature-detect instead of crashing at startup.
+        #expect(installed.context.unsupportedAPIs.contains("offscreen"))
+    }
+
+    @Test func extensionPagesGetTheContextWebViewConfiguration() async throws {
+        let (manager, directory) = makeManager()
+        defer { cleanUp(manager, directory: directory) }
+        let source = try ExtensionFixture.makeUnpackedDirectory()
+        defer { try? FileManager.default.removeItem(at: source) }
+        let installed = try await manager.install(fromUnpackedDirectory: source, consent: approveAll)
+
+        // An extension's own page must load in a webview carrying the
+        // extension controller configuration (ordinary webviews reject
+        // top-level webkit-extension:// navigation with -1008).
+        let pageURL = try #require(URL(string: "webkit-extension://\(installed.id)/options.html"))
+        let configuration = try #require(manager.extensionPageWebViewConfiguration(for: pageURL))
+        #expect(configuration.webExtensionController === manager.controller)
+
+        // Ordinary URLs and unknown extensions stay on the normal path.
+        #expect(try manager.extensionPageWebViewConfiguration(for: #require(URL(string: "https://example.com"))) == nil)
+        #expect(try manager.extensionPageWebViewConfiguration(
+            for: #require(URL(string: "webkit-extension://unknownextension/options.html"))
+        ) == nil)
+    }
+
     // MARK: Web Store pipeline with stubbed network
 
     @Test func installsFromWebStoreURLWithStubbedNetwork() async throws {

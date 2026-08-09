@@ -41,6 +41,10 @@ enum BrowserPermissionDecision {
 struct BrowserNavigationAction {
     let request: URLRequest
     let modifierFlags: NSEvent.ModifierFlags
+    /// True for top-level (main frame) navigations. New-window navigations
+    /// (nil target frame) are not main-frame — they go through the
+    /// open-in-new-tab path instead.
+    let isMainFrame: Bool
 }
 
 enum BrowserNavigationActionDisposition {

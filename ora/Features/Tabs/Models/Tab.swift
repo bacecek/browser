@@ -1,6 +1,7 @@
 import AppKit
 import SwiftData
 import SwiftUI
+@preconcurrency import WebKit
 
 enum TabType: String, Codable {
     case pinned
@@ -212,38 +213,90 @@ class Tab: ObservableObject, Identifiable {
             passwordCoordinator = PasswordAutofillCoordinator(tab: self)
         }
 
+        self.historyManager = historyManager
+        self.downloadManager = downloadManager
+        self.tabManager = tabManager
+
+        let targetURL = (type != .normal ? savedURL : url) ?? url
+        buildBrowserPage(loading: targetURL, isPrivate: isPrivate)
+    }
+
+    /// Builds the webview for `targetURL` and loads it. An Extension's own
+    /// pages (options page, extension-page tabs) need a webview built from
+    /// the extension context's configuration; ordinary tab webviews reject
+    /// top-level webkit-extension:// navigation with -1008. Extension
+    /// contexts load asynchronously at launch, so extension-page tabs wait
+    /// for that load before choosing the configuration — a tab restored at
+    /// relaunch would otherwise race it, get the standard configuration, and
+    /// hit -1008 again. Never in Private Windows — extensions don't exist
+    /// there.
+    private func buildBrowserPage(loading targetURL: URL, isPrivate: Bool) {
+        if !isPrivate, targetURL.scheme == "webkit-extension" {
+            Task { @MainActor in
+                await ExtensionManager.shared.ensureLoaded()
+                guard self.browserPage == nil else { return }
+                self.buildBrowserPageNow(loading: targetURL, isPrivate: isPrivate)
+            }
+        } else {
+            buildBrowserPageNow(loading: targetURL, isPrivate: isPrivate)
+        }
+    }
+
+    private func buildBrowserPageNow(loading targetURL: URL, isPrivate: Bool) {
         let engine = BrowserEngine.shared
         let profile = engine.makeProfile(identifier: container.id, isPrivate: isPrivate)
         let privacySettings = SettingsStore.shared.privacySettings(for: container.id)
         let userScripts = OraBrowserScripts.userScripts(
             passwordProvider: SettingsStore.shared.passwordManagerProvider
         ) + BrowserPrivacyService.privacyScripts(for: privacySettings)
+        let extensionPageConfiguration: WKWebViewConfiguration? = isPrivate
+            ? nil
+            : MainActor.assumeIsolated {
+                ExtensionManager.shared.extensionPageWebViewConfiguration(for: targetURL)
+            }
         let page = engine.makePage(
             profile: profile,
             configuration: BrowserPageConfiguration.oraDefault(
                 userScripts: userScripts,
                 privacySettings: privacySettings
             ),
-            delegate: nil
+            delegate: nil,
+            extensionPageConfiguration: extensionPageConfiguration,
+            extensionPageHost: extensionPageConfiguration != nil ? targetURL.host?.lowercased() : nil
         )
         browserPage = page
 
-        self.historyManager = historyManager
-        self.downloadManager = downloadManager
-        self.tabManager = tabManager
         self.isWebViewReady = false
         self.setupBrowserPageDelegate(for: page)
         self.syncBackgroundColorFromHex()
         // Load after a short delay to ensure layout
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
-            let url = if self.type != .normal {
-                self.savedURL
-            } else {
-                self.url
-            }
-            page.load(URLRequest(url: url ?? self.url))
+            page.load(URLRequest(url: targetURL))
             self.isWebViewReady = true
         }
+    }
+
+    /// Navigates the loaded tab in place, rebuilding the webview when the
+    /// target needs a different configuration: extension pages must be hosted
+    /// in a webview built from THEIR context's configuration (an ordinary
+    /// webview rejects top-level webkit-extension:// navigation with -1008,
+    /// and a webview built for extension A fails loads of extension B's
+    /// pages), and leaving an extension page goes back to the standard
+    /// configuration.
+    func navigate(to targetURL: URL) {
+        lastAccessedAt = Date()
+        guard let page = browserPage else { return }
+        let targetExtensionHost: String? = !isPrivate && MainActor.assumeIsolated {
+            ExtensionManager.shared.extensionPageWebViewConfiguration(for: targetURL) != nil
+        } ? targetURL.host?.lowercased() : nil
+        if page.extensionPageHost == targetExtensionHost {
+            page.load(URLRequest(url: targetURL))
+            return
+        }
+        url = targetURL
+        urlString = targetURL.absoluteString
+        destroyWebView()
+        buildBrowserPage(loading: targetURL, isPrivate: isPrivate)
     }
 
     func stopMedia(completed: @escaping () -> Void) {
@@ -277,9 +330,12 @@ class Tab: ObservableObject, Identifiable {
         lastAccessedAt = Date()
         let input = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // 1) Try to construct a direct URL (has scheme or valid domain+TLD/IP)
+        // 1) Try to construct a direct URL (has scheme or valid domain+TLD/IP).
+        // Goes through `navigate(to:)` so typed extension-page URLs (and
+        // typed URLs leaving an extension page) get the right webview
+        // configuration.
         if let directURL = constructURL(from: input) {
-            browserPage?.load(URLRequest(url: directURL))
+            navigate(to: directURL)
             return
         }
 
@@ -288,7 +344,7 @@ class Tab: ObservableObject, Identifiable {
         if let engine = searchEngineService.getDefaultSearchEngine(for: self.container.id),
            let searchURL = searchEngineService.createSearchURL(for: engine, query: input)
         {
-            browserPage?.load(URLRequest(url: searchURL))
+            navigate(to: searchURL)
             return
         }
 
@@ -296,7 +352,7 @@ class Tab: ObservableObject, Identifiable {
         if let fallbackURL = URL(string: "https://www.google.com/search?client=safari&rls=en&ie=UTF-8&oe=UTF-8&q="
             + (input.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")
         ) {
-            browserPage?.load(URLRequest(url: fallbackURL))
+            navigate(to: fallbackURL)
         }
     }
 

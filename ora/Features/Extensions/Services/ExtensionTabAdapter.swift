@@ -74,7 +74,11 @@ final class ExtensionTabAdapter: NSObject, WKWebExtensionTab {
     func isSelected(for context: WKWebExtensionContext) -> Bool {
         guard let tab else { return false }
         return MainActor.assumeIsolated {
-            tab.tabManager?.activeTab?.id == tab.id
+            // Restored tabs have no tabManager until first activation; fall
+            // back to the window that lists the tab.
+            let tabManager = tab.tabManager
+                ?? ExtensionManager.shared.windowAdapter(containing: tab)?.tabManager
+            return tabManager?.activeTab?.id == tab.id
         }
     }
 
@@ -135,12 +139,17 @@ final class ExtensionTabAdapter: NSObject, WKWebExtensionTab {
     }
 
     func loadURL(_ url: URL, for context: WKWebExtensionContext, completionHandler: @escaping (Error?) -> Void) {
-        guard let tab, let page = tab.browserPage else {
+        guard let tab, tab.browserPage != nil else {
             completionHandler(Self.goneError)
             return
         }
-        tab.lastAccessedAt = Date()
-        page.load(URLRequest(url: url))
+        // `navigate(to:)` rebuilds the webview with the extension context's
+        // configuration when the target is an extension page (an ordinary
+        // webview rejects top-level webkit-extension:// with -1008), e.g.
+        // chrome.tabs.update({url: "<extension page>"}).
+        MainActor.assumeIsolated {
+            tab.navigate(to: url)
+        }
         completionHandler(nil)
     }
 

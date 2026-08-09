@@ -244,7 +244,7 @@ enum ExtensionFixture {
             "version": "\(version)",
             "description": "Fixture for install pipeline tests",
             "permissions": ["storage"],
-            "optional_permissions": ["tabs", "alarms"],
+            "optional_permissions": ["tabs", "alarms", "nativeMessaging"],
             "background": { "service_worker": "background.js" }
         }
         """

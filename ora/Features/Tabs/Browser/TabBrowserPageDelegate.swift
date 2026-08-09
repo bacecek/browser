@@ -15,25 +15,53 @@ final class TabBrowserPageDelegate: BrowserPageDelegate {
         _ page: BrowserPage,
         decidePolicyFor navigationAction: BrowserNavigationAction
     ) -> BrowserNavigationActionDisposition {
-        guard navigationAction.modifierFlags.contains(.command),
-              let url = navigationAction.request.url,
-              let tab,
-              let tabManager = tab.tabManager,
-              let historyManager = tab.historyManager,
-              let downloadManager = tab.downloadManager
-        else {
-            return .allow
+        guard let url = navigationAction.request.url, let tab else { return .allow }
+
+        if navigationAction.modifierFlags.contains(.command),
+           let tabManager = tab.tabManager,
+           let historyManager = tab.historyManager,
+           let downloadManager = tab.downloadManager
+        {
+            MainActor.assumeIsolated {
+                _ = tabManager.openTab(
+                    url: url,
+                    historyManager: historyManager,
+                    downloadManager: downloadManager,
+                    isPrivate: tab.isPrivate
+                )
+            }
+            return .openInNewTab
         }
 
-        MainActor.assumeIsolated {
-            _ = tabManager.openTab(
-                url: url,
-                historyManager: historyManager,
-                downloadManager: downloadManager,
-                isPrivate: tab.isPrivate
-            )
+        // An extension page's webview is built from its extension context's
+        // configuration, and WebKit fails navigations in it to URLs outside
+        // that extension's base URL. A normal link click leaving the boundary
+        // (an external site, or another extension's page) must therefore be
+        // cancelled and re-routed through Tab.navigate(to:), which rebuilds
+        // the webview with the right configuration. Deferred one turn so the
+        // teardown never races WebKit's in-flight decidePolicy callback.
+        if page.isExtensionPage,
+           navigationAction.isMainFrame,
+           leavesExtensionConfiguration(of: page, target: url)
+        {
+            DispatchQueue.main.async {
+                tab.navigate(to: url)
+            }
+            return .cancel
         }
-        return .openInNewTab
+
+        return .allow
+    }
+
+    /// Whether navigating the extension page to `url` would leave the webview
+    /// configuration it was built from: any web URL, or a page of a different
+    /// extension. Other schemes (about:, blob:, data:) stay in place.
+    private func leavesExtensionConfiguration(of page: BrowserPage, target url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else { return false }
+        if scheme == "webkit-extension" {
+            return url.host?.lowercased() != page.extensionPageHost
+        }
+        return scheme == "http" || scheme == "https"
     }
 
     func browserPage(_ page: BrowserPage, didRequestOpenInNewTab url: URL) {

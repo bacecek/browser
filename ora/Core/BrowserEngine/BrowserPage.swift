@@ -5,6 +5,20 @@ import Foundation
 final class BrowserPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
     weak var delegate: BrowserPageDelegate?
 
+    /// The lowercased extension id (the `webkit-extension://` host) whose
+    /// context configuration this webview was built from, nil for standard
+    /// pages. WebKit ties extension-page loading to the specific context's
+    /// configuration, so callers navigating to a different extension's page —
+    /// or across the extension/non-extension boundary — must rebuild the page
+    /// (`Tab.navigate`).
+    let extensionPageHost: String?
+
+    /// True when the webview was built from an extension context's
+    /// configuration (extension pages) rather than the standard one.
+    var isExtensionPage: Bool {
+        extensionPageHost != nil
+    }
+
     private let webView: WKWebView
     private let messageNames: [String]
     private var originalURL: URL?
@@ -18,8 +32,78 @@ final class BrowserPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptM
     init(
         profile: BrowserEngineProfile,
         configuration: BrowserPageConfiguration,
-        delegate: BrowserPageDelegate?
+        delegate: BrowserPageDelegate?,
+        extensionPageConfiguration: WKWebViewConfiguration? = nil,
+        extensionPageHost: String? = nil
     ) {
+        self.extensionPageHost = extensionPageConfiguration != nil ? extensionPageHost : nil
+        let webConfiguration: WKWebViewConfiguration
+        if let extensionPageConfiguration {
+            // Extension pages (an Extension's options page in a regular tab)
+            // must be hosted in a webview built from the extension context's
+            // own configuration — WebKit rejects top-level webkit-extension://
+            // navigation in ordinary tab webviews with -1008. The context's
+            // configuration already carries the controller, data store, and
+            // scheme handlers; Ora's user scripts and script-message handlers
+            // stay out of extension pages.
+            webConfiguration = extensionPageConfiguration
+            messageNames = []
+        } else {
+            webConfiguration = Self.makeStandardConfiguration(profile: profile, configuration: configuration)
+            messageNames = configuration.scriptMessageNames
+        }
+
+        webView = WKWebView(frame: .zero, configuration: webConfiguration)
+        self.delegate = delegate
+
+        super.init()
+
+        if extensionPageConfiguration == nil {
+            for messageName in configuration.scriptMessageNames {
+                webConfiguration.userContentController.add(self, name: messageName)
+            }
+            for script in configuration.userScripts {
+                let userScript = WKUserScript(
+                    source: script.source,
+                    injectionTime: mapInjectionTime(script.injectionTime),
+                    forMainFrameOnly: script.forMainFrameOnly
+                )
+                webConfiguration.userContentController.addUserScript(userScript)
+            }
+        }
+
+        webView.navigationDelegate = self
+        webView.uiDelegate = self
+        webView.allowsMagnification = true
+        webView.allowsBackForwardNavigationGestures = configuration.allowsBackForwardNavigationGestures
+        webView.wantsLayer = true
+        webView.isInspectable = configuration.allowsInspectableDebugging
+        if let layer = webView.layer {
+            layer.isOpaque = true
+            layer.drawsAsynchronously = true
+        }
+
+        if extensionPageConfiguration != nil {
+            // No content-blocker rules on the extension's own pages — but the
+            // navigation gate still waits for the Extensions load so the
+            // context exists before the first navigation.
+            openNavigationGate(isPrivate: false)
+        } else {
+            BrowserPrivacyService.shared.prepareConfiguration(
+                webConfiguration,
+                spaceID: profile.identifier
+            ) { [weak self, isPrivate = profile.isPrivate] in
+                self?.openNavigationGate(isPrivate: isPrivate)
+            }
+        }
+    }
+
+    /// The ordinary web-page configuration (everything except extension pages,
+    /// which use the extension context's own configuration instead).
+    private static func makeStandardConfiguration(
+        profile: BrowserEngineProfile,
+        configuration: BrowserPageConfiguration
+    ) -> WKWebViewConfiguration {
         let webConfiguration = WKWebViewConfiguration()
         webConfiguration.applicationNameForUserAgent = configuration.userAgent
         webConfiguration.websiteDataStore = profile.dataStore
@@ -47,52 +131,16 @@ final class BrowserPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptM
         webpagePreferences.allowsContentJavaScript = configuration.allowsJavaScript
         webConfiguration.defaultWebpagePreferences = webpagePreferences
 
-        let contentController = WKUserContentController()
-        webConfiguration.userContentController = contentController
-        messageNames = configuration.scriptMessageNames
+        webConfiguration.userContentController = WKUserContentController()
 
         // Extensions run in every Space but never in Private Windows.
-        // Must attach before the WKWebView is created below.
+        // Must attach before the WKWebView is created from this configuration.
         if !profile.isPrivate {
             webConfiguration.webExtensionController = MainActor.assumeIsolated {
                 ExtensionManager.shared.controller
             }
         }
-
-        webView = WKWebView(frame: .zero, configuration: webConfiguration)
-        self.delegate = delegate
-
-        super.init()
-
-        for messageName in configuration.scriptMessageNames {
-            contentController.add(self, name: messageName)
-        }
-        for script in configuration.userScripts {
-            let userScript = WKUserScript(
-                source: script.source,
-                injectionTime: mapInjectionTime(script.injectionTime),
-                forMainFrameOnly: script.forMainFrameOnly
-            )
-            contentController.addUserScript(userScript)
-        }
-
-        webView.navigationDelegate = self
-        webView.uiDelegate = self
-        webView.allowsMagnification = true
-        webView.allowsBackForwardNavigationGestures = configuration.allowsBackForwardNavigationGestures
-        webView.wantsLayer = true
-        webView.isInspectable = configuration.allowsInspectableDebugging
-        if let layer = webView.layer {
-            layer.isOpaque = true
-            layer.drawsAsynchronously = true
-        }
-
-        BrowserPrivacyService.shared.prepareConfiguration(
-            webConfiguration,
-            spaceID: profile.identifier
-        ) { [weak self, isPrivate = profile.isPrivate] in
-            self?.openNavigationGate(isPrivate: isPrivate)
-        }
+        return webConfiguration
     }
 
     /// Opens the deferred-navigation gate. Non-private pages first await the shared
@@ -276,7 +324,8 @@ final class BrowserPage: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptM
     ) {
         let action = BrowserNavigationAction(
             request: navigationAction.request,
-            modifierFlags: navigationAction.modifierFlags
+            modifierFlags: navigationAction.modifierFlags,
+            isMainFrame: navigationAction.targetFrame?.isMainFrame ?? false
         )
 
         switch delegate?.browserPage(self, decidePolicyFor: action) ?? .allow {

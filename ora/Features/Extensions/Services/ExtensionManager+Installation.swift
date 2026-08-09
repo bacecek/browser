@@ -126,6 +126,7 @@ extension ExtensionManager {
     /// fresh.
     private func unloadPreviousVersion(extensionId: String, name: String) {
         guard let existingContext = contexts[extensionId] else { return }
+        terminateNativeMessagingHosts(forExtension: extensionId)
         do {
             try controller.unload(existingContext)
         } catch {
@@ -235,6 +236,7 @@ extension ExtensionManager {
             throw ExtensionInstallError.notInstalled(extensionId)
         }
 
+        terminateNativeMessagingHosts(forExtension: extensionId)
         if let context = contexts[extensionId] {
             do {
                 try controller.unload(context)

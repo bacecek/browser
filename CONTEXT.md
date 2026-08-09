@@ -23,3 +23,11 @@ _Avoid_: Autofill engine
 **Private Window**:
 A window whose data lives only in memory and is never touched by Extensions.
 _Avoid_: Incognito
+
+**Native Messaging Host**:
+A program on the user's Mac (e.g. 1Password's BrowserSupport) that an Extension exchanges messages with, described by a manifest file that names which Extensions may reach it.
+_Avoid_: Helper, bridge
+
+**Native Port**:
+One open channel between an Extension and a running Native Messaging Host process. Closing the port ends the process; one process per port.
+_Avoid_: Socket, connection
